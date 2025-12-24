@@ -1,0 +1,48 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<div class="grid md:grid-cols-3 gap-8">
+    <div class="md:col-span-1">
+        <div class="bg-white p-6 rounded-lg shadow-sm border border-slate-200 sticky top-4">
+            <h3 class="text-lg font-bold mb-4 text-indigo-600 border-b pb-2">新規課題の作成</h3>
+            <form action="/create_assignment" method="post" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-slate-700">科目・タイトル</label>
+                    <input type="text" name="title" placeholder="例: 線形代数 第3回" required
+                        class="mt-1 block w-full border-slate-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm border p-2">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-slate-700">学習内容の指示 (AIプロンプト)</label>
+                    <textarea name="description" rows="5" placeholder="例: 固有値と固有ベクトルの幾何学的意味について、工学的応用例（振動解析など）を交えて解説して。" required
+                        class="mt-1 block w-full border-slate-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm border p-2"></textarea>
+                    <p class="text-xs text-slate-500 mt-1">AI先生はこの指示に基づいて授業を生成します。</p>
+                </div>
+                <button type="submit" class="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition font-bold shadow">
+                    課題を発行する
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <div class="md:col-span-2">
+        <h3 class="text-xl font-bold mb-4 text-slate-800">発行済み課題一覧</h3>
+        {% if assignments %}
+            <div class="grid gap-4">
+                {% for assignment in assignments %}
+                <div class="bg-white p-5 rounded-lg shadow-sm border border-slate-200 hover:shadow-md transition">
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <h4 class="text-lg font-bold text-slate-800">{{ assignment.title }}</h4>
+                            <p class="text-slate-600 text-sm mt-1">{{ assignment.description }}</p>
+                        </div>
+                        <span class="text-xs text-slate-400">{{ assignment.created_at.strftime('%Y-%m-%d') }}</span>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <p class="text-slate-500 text-center py-10">まだ課題がありません。左のフォームから作成してください。</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
