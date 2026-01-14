@@ -232,13 +232,26 @@ def ask_teacher_api():
 def quiz_page(assignment_id):
     if session.get('role') != 'student': return redirect(url_for('index'))
     assignment = Assignment.query.get_or_404(assignment_id)
-    return render_template('quiz.html', assignment=assignment)
+    lesson_log = LessonLog.query.filter_by(assignment_id=assignment_id, student_id=session['user_id']).first()
+    slides_content = lesson_log.slides_content if lesson_log else "（授業スライドがまだ生成されていません）"
+    return render_template('quiz.html', assignment=assignment, slides_content=slides_content)
 
 @app.route('/api/generate_quiz', methods=['POST'])
 def generate_quiz_api():
     data = request.json
     assignment_id = data.get('assignment_id')
-    lesson_log = LessonLog.query.filter_by(assignment_id=assignment_id, student_id=session['user_id']).first()
+    user_id = session['user_id']
+
+    existing_quiz = QuizLog.query.filter_by(assignment_id=assignment_id, student_id=user_id).first()
+    if existing_quiz:
+        return jsonify({
+            "quiz_id": existing_quiz.id, 
+            "questions": json.loads(existing_quiz.questions),
+            "student_answers": json.loads(existing_quiz.student_answers) if existing_quiz.student_answers else None,
+            "grading_result": existing_quiz.grading_result
+        })
+
+    lesson_log = LessonLog.query.filter_by(assignment_id=assignment_id, student_id=user_id).first()
     if not lesson_log: return jsonify({"error": "先に授業を受けてください"}), 400
     
     prompt = f"""
@@ -249,7 +262,7 @@ def generate_quiz_api():
     try:
         res = model_pro.generate_content(prompt)
         text = res.text.replace('```json','').replace('```','').strip()
-        new_quiz = QuizLog(assignment_id=assignment_id, student_id=session['user_id'], questions=text)
+        new_quiz = QuizLog(assignment_id=assignment_id, student_id=user_id, questions=text)
         db.session.add(new_quiz)
         db.session.commit()
         return jsonify({"quiz_id": new_quiz.id, "questions": json.loads(text)})
@@ -280,7 +293,7 @@ def grade_quiz_api():
 @app.route('/tools')
 def tools_page(): return render_template('free_tools.html')
 
-# --- ★修正: 複数画像を一括採点できるように変更 ---
+# --- ★修正: 模範解答（複数）と、解答なし時の対応 ---
 @app.route('/api/general_grading', methods=['POST'])
 def general_grading_api():
     data = request.json
@@ -288,7 +301,6 @@ def general_grading_api():
     user_id = session.get('user_id')
     
     contents = []
-    # システムプロンプトを「複数問題対応」に変更
     system_prompt = "あなたは高専の教員です。提出された画像やテキストを見て採点を行ってください。"
     system_prompt += "【重要】画像の中に**複数の問題**が含まれている場合は、問1, 問2...のように**問題を区別して**それぞれ採点・解説してください。"
     
@@ -296,7 +308,6 @@ def general_grading_api():
         try: return {"mime_type": "image/jpeg", "data": base64.b64decode(b64.split(",",1)[1] if "," in b64 else b64)}
         except: return None
 
-    # ログ保存用
     log_input_text = ""
     log_input_image = None
 
@@ -307,16 +318,25 @@ def general_grading_api():
     elif mode == 'problem':
         contents.append(system_prompt)
         
-        # 模範解答（あれば）
+        # 模範解答テキスト
         model_answer_text = data.get('model_answer', '')
         if model_answer_text: contents.append(f"【模範解答 (テキスト)】\n{model_answer_text}")
         
-        model_answer_img = data.get('model_answer_image')
-        if model_answer_img:
-            contents.append("【模範解答 (画像)】")
-            contents.append(decode_image(model_answer_img))
-        
-        contents.append("\n上記「模範解答」を正解基準として（無い場合は一般的知識で）、以下の「学生の解答」を採点してください。\n")
+        # ★模範解答画像 (複数対応)
+        model_answer_imgs = data.get('model_answer_images', [])
+        if model_answer_imgs:
+            contents.append("【模範解答 (画像一覧)】")
+            for i, img_str in enumerate(model_answer_imgs):
+                decoded = decode_image(img_str)
+                if decoded: 
+                    contents.append(f"--- 模範解答画像 {i+1} ---")
+                    contents.append(decoded)
+
+        # ★模範解答が一切ない場合のメッセージ
+        if not model_answer_text and not model_answer_imgs:
+            contents.append("※模範解答は提供されていません。あなたの専門知識に基づいて、正誤判定と解説を行ってください。")
+        else:
+            contents.append("\n上記「模範解答」を正解基準として採点してください。\n")
         
         # テキスト情報
         text_content = data.get('text_content', '')
@@ -324,27 +344,23 @@ def general_grading_api():
             contents.append(f"【補足情報・テキスト解答】\n{text_content}")
             log_input_text = text_content
         
-        # ★ここが重要: 複数の画像をすべてAIに渡す
+        # 学生の解答画像 (複数)
         images = data.get('images', [])
         if images:
             contents.append("【学生の解答 (画像一覧)】")
-            log_input_image = images[0] # ログには代表1枚だけ保存
+            log_input_image = images[0]
             for i, img_str in enumerate(images):
                 decoded = decode_image(img_str)
                 if decoded: 
-                    contents.append(f"--- 画像 {i+1} ---")
+                    contents.append(f"--- 学生画像 {i+1} ---")
                     contents.append(decoded)
 
     try:
         response = model_pro.generate_content(contents)
         result_text = response.text
-        
         db.session.add(GradingLog(
-            student_id=user_id, 
-            mode=mode, 
-            input_text=log_input_text, 
-            input_image=log_input_image, 
-            feedback_content=result_text
+            student_id=user_id, mode=mode, input_text=log_input_text, 
+            input_image=log_input_image, feedback_content=result_text
         ))
         db.session.commit()
         return jsonify({"result": result_text})
