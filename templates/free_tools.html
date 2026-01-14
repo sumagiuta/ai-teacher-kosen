@@ -57,7 +57,6 @@
                             <input id="problemImages" type="file" class="hidden" accept="image/*" multiple onchange="updateFileList(this, 'problemFileList')">
                         </label>
                         <div id="problemFileList" class="text-xs text-yellow-800 space-y-1"></div>
-
                         <textarea id="modelAnswer" class="w-full h-16 p-2 border border-yellow-300 rounded text-xs focus:ring-yellow-500" placeholder="補足テキストがあればここに入力 (例: 正解は5番です)"></textarea>
                     </div>
                 </div>
@@ -80,7 +79,6 @@
                             <input id="studentImages" type="file" class="hidden" accept="image/*" multiple onchange="updateFileList(this, 'studentFileList')">
                         </label>
                         <div id="studentFileList" class="text-xs text-indigo-800 space-y-1"></div>
-
                         <textarea id="studentText" class="w-full h-16 p-2 border border-indigo-300 rounded text-xs focus:ring-indigo-500" placeholder="画像が読みづらい場合は、ここにテキストで回答を書いてもOKです。"></textarea>
                     </div>
                 </div>
@@ -117,13 +115,11 @@
         reader.readAsText(file);
     }
 
-    // 汎用ファイルリスト更新
     function updateFileList(input, targetId) {
         const list = document.getElementById(targetId);
         list.innerHTML = '';
         if (input.files.length > 0) {
             for (let i = 0; i < input.files.length; i++) {
-                // ファイル名とアイコンを表示
                 list.innerHTML += `<div class="flex items-center gap-2 bg-white/50 px-2 py-1 rounded border border-slate-200"><span class="text-lg">📄</span> ${input.files[i].name}</div>`;
             }
         }
@@ -143,15 +139,47 @@
         activeTab.classList.add('text-indigo-600', 'border-b-2', 'border-indigo-600');
     }
 
-    const toBase64 = file => new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.readAsDataURL(file);
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = error => reject(error);
-    });
+    // ★新規追加: 画像をブラウザでリサイズ・圧縮する関数
+    function resizeAndCompressImage(file) {
+        return new Promise((resolve, reject) => {
+            const maxWidth = 1500; // 長辺を1500pxに制限
+            const quality = 0.7;   // 画質を70%に落とす
+            
+            const reader = new FileReader();
+            reader.readAsDataURL(file);
+            reader.onload = event => {
+                const img = new Image();
+                img.src = event.target.result;
+                img.onload = () => {
+                    let width = img.width;
+                    let height = img.height;
+                    
+                    if (width > height) {
+                        if (width > maxWidth) {
+                            height *= maxWidth / width;
+                            width = maxWidth;
+                        }
+                    } else {
+                        if (height > maxWidth) {
+                            width *= maxWidth / height;
+                            height = maxWidth;
+                        }
+                    }
+                    
+                    const canvas = document.createElement('canvas');
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, width, height);
+                    
+                    resolve(canvas.toDataURL('image/jpeg', quality));
+                };
+            };
+            reader.onerror = error => reject(error);
+        });
+    }
 
     let lastResultText = "";
-
     function speakResult() {
         if(lastResultText) speakText(lastResultText);
     }
@@ -161,7 +189,8 @@
         const speakBtn = document.getElementById('speakBtn');
         speakBtn.classList.add('hidden');
 
-        resultArea.innerHTML = '<div class="flex flex-col justify-center items-center h-full gap-4"><div class="animate-spin rounded-full h-10 w-10 border-b-2 border-indigo-600"></div><p class="text-indigo-600 font-bold animate-pulse">分析中...</p></div>';
+        // ★メッセージ変更
+        resultArea.innerHTML = '<div class="flex flex-col justify-center items-center h-full gap-4"><div class="animate-spin rounded-full h-10 w-10 border-b-2 border-indigo-600"></div><p class="text-indigo-600 font-bold animate-pulse">画像を圧縮・送信中...</p></div>';
 
         const payload = { mode: mode };
 
@@ -170,27 +199,25 @@
             if(!text) { alert("テキストを入力してください"); resultArea.innerHTML=''; return; }
             payload.text_content = text;
         } else {
-            // STEP 1: 問題・模範解答
             const modelText = document.getElementById('modelAnswer').value;
             const problemFiles = document.getElementById('problemImages').files;
             
-            // STEP 2: 生徒の解答
             const studentText = document.getElementById('studentText').value;
             const studentFiles = document.getElementById('studentImages').files;
 
             payload.model_answer = modelText;
             payload.text_content = studentText;
             
-            // 問題画像の処理
             payload.problem_images = [];
+            // ★自動圧縮して送信
             for (let i = 0; i < problemFiles.length; i++) {
-                payload.problem_images.push(await toBase64(problemFiles[i]));
+                payload.problem_images.push(await resizeAndCompressImage(problemFiles[i]));
             }
             
-            // 生徒解答画像の処理
             payload.student_images = [];
+            // ★自動圧縮して送信
             for (let i = 0; i < studentFiles.length; i++) {
-                payload.student_images.push(await toBase64(studentFiles[i]));
+                payload.student_images.push(await resizeAndCompressImage(studentFiles[i]));
             }
             
             if (payload.problem_images.length === 0 && payload.student_images.length === 0 && !studentText) {
@@ -212,7 +239,6 @@
             try {
                 data = JSON.parse(text);
             } catch (e) {
-                // JSON解析に失敗した場合（Unexpected tokenエラー）は、サーバーからの生HTMLを表示する
                 throw new Error("サーバーエラーが発生しました。容量オーバー等の可能性があります。\n詳細: " + text.substring(0, 150) + "...");
             }
 
@@ -229,7 +255,6 @@
             }
 
         } catch (e) {
-            // エラー表示をリッチにする
             resultArea.innerHTML = `
                 <div class="bg-red-50 border border-red-200 rounded p-4 text-red-700">
                     <p class="font-bold">⚠️ エラーが発生しました</p>

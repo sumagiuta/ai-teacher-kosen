@@ -20,8 +20,8 @@ app.secret_key = 'kosen_pbl_secret_key'
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///kosen.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# ★修正: 複数画像を扱うため、容量制限を64MBに緩和
-app.config['MAX_CONTENT_LENGTH'] = 64 * 1024 * 1024
+# ★修正: 画像圧縮を入れても安全なように128MBまで許可
+app.config['MAX_CONTENT_LENGTH'] = 128 * 1024 * 1024
 
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
@@ -289,7 +289,6 @@ def grade_quiz_api():
 @app.route('/tools')
 def tools_page(): return render_template('free_tools.html')
 
-# --- 問題画像と解答画像を分離して採点するロジック ---
 @app.route('/api/general_grading', methods=['POST'])
 def general_grading_api():
     data = request.json
@@ -298,7 +297,6 @@ def general_grading_api():
     
     contents = []
     
-    # Base64デコード関数
     def decode_image(b64): 
         try: return {"mime_type": "image/jpeg", "data": base64.b64decode(b64.split(",",1)[1] if "," in b64 else b64)}
         except: return None
@@ -313,7 +311,6 @@ def general_grading_api():
     elif mode == 'problem':
         system_prompt = """
         あなたは高専の教員です。以下に「問題（または模範解答）」と「生徒の解答」の画像が提示されます。
-        
         【指示】
         1. まず「問題画像」を読み取り、どのような問題が出されているか理解してください。
         2. 次に「生徒の解答画像」を見て、採点を行ってください。
@@ -321,11 +318,9 @@ def general_grading_api():
         4. 模範解答がない場合は、あなたの専門知識に基づいて正誤判定と解説を行ってください。
         """
         contents.append(system_prompt)
-        
         contents.append("\n=== 【A. 問題・模範解答セクション】 ===")
         model_answer_text = data.get('model_answer', '')
-        if model_answer_text: 
-            contents.append(f"補足テキスト: {model_answer_text}")
+        if model_answer_text: contents.append(f"補足テキスト: {model_answer_text}")
         
         problem_images = data.get('problem_images', [])
         if problem_images:
@@ -352,14 +347,12 @@ def general_grading_api():
                     contents.append(f"Student Answer Image {i+1}")
                     contents.append(decoded)
         
-        # バリデーション
         if not problem_images and not student_images and not text_content:
              return jsonify({"error": "画像またはテキストが入力されていません。"}), 400
 
     try:
         response = model_pro.generate_content(contents)
         result_text = response.text
-        
         db.session.add(GradingLog(
             student_id=user_id, mode=mode, input_text=log_input_text, 
             input_image=log_input_image, feedback_content=result_text
