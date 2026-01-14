@@ -34,6 +34,10 @@
             
             <div class="flex items-center gap-4">
                 {% if session.get('user_id') %}
+                    <a href="/switch_role" class="text-xs font-bold bg-white/20 hover:bg-white/30 text-white px-3 py-1.5 rounded transition flex items-center gap-1 border border-white/30" title="デモ用: 先生と学生を切り替えます">
+                        🔄 {{ '学生へ切替' if session.get('role') == 'teacher' else '先生へ切替' }}
+                    </a>
+
                     <span class="text-xs font-semibold bg-indigo-900 px-3 py-1 rounded-full border border-indigo-500">
                         {{ '👨‍🏫 教員' if session.get('role') == 'teacher' else '🧑‍🎓 学生' }}
                     </span>
@@ -61,6 +65,21 @@
                 throwOnError: false
             });
         });
+
+        // ★新規追加: 読み上げ機能 (会話速度: 1.2倍)
+        function speakText(text) {
+            // 現在の読み上げをキャンセル
+            window.speechSynthesis.cancel();
+
+            // テキストからMarkdown記号などを簡易的に除去（読み上げやすくする）
+            const cleanText = text.replace(/[#*`\-]/g, '');
+
+            const uttr = new SpeechSynthesisUtterance(cleanText);
+            uttr.lang = 'ja-JP';
+            uttr.rate = 1.2; // 少し速め（自然な会話速度）
+            uttr.pitch = 1.0;
+            window.speechSynthesis.speak(uttr);
+        }
     </script>
 </body>
 </html>

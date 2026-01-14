@@ -3,7 +3,7 @@
 {% block content %}
 <div class="grid md:grid-cols-3 gap-8">
     <div class="md:col-span-1">
-        <div class="bg-white p-6 rounded-lg shadow-sm border border-slate-200 sticky top-4">
+        <div class="bg-white p-6 rounded-lg shadow-sm border border-slate-200 sticky top-24">
             <h3 class="text-lg font-bold mb-4 text-indigo-600 border-b pb-2">新規課題の作成</h3>
             <form action="/create_assignment" method="post" class="space-y-4">
                 <div>
@@ -24,25 +24,208 @@
         </div>
     </div>
 
-    <div class="md:col-span-2">
-        <h3 class="text-xl font-bold mb-4 text-slate-800">発行済み課題一覧</h3>
-        {% if assignments %}
-            <div class="grid gap-4">
-                {% for assignment in assignments %}
-                <div class="bg-white p-5 rounded-lg shadow-sm border border-slate-200 hover:shadow-md transition">
-                    <div class="flex justify-between items-start">
-                        <div>
-                            <h4 class="text-lg font-bold text-slate-800">{{ assignment.title }}</h4>
-                            <p class="text-slate-600 text-sm mt-1">{{ assignment.description }}</p>
+    <div class="md:col-span-2 space-y-8">
+        
+        <div>
+            <h3 class="text-xl font-bold mb-4 text-slate-800">発行済み課題一覧</h3>
+            {% if assignments %}
+                <div class="grid gap-4">
+                    {% for assignment in assignments %}
+                    <div class="bg-white p-5 rounded-lg shadow-sm border border-slate-200 hover:shadow-md transition">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <h4 class="text-lg font-bold text-slate-800">{{ assignment.title }}</h4>
+                                <p class="text-slate-600 text-sm mt-1">{{ assignment.description }}</p>
+                            </div>
+                            <span class="text-xs text-slate-400">{{ assignment.created_at.strftime('%Y-%m-%d') }}</span>
                         </div>
-                        <span class="text-xs text-slate-400">{{ assignment.created_at.strftime('%Y-%m-%d') }}</span>
                     </div>
+                    {% endfor %}
                 </div>
-                {% endfor %}
+            {% else %}
+                <p class="text-slate-500 text-center py-10">まだ課題がありません。左のフォームから作成してください。</p>
+            {% endif %}
+        </div>
+
+        <div>
+            <h3 class="text-xl font-bold mb-4 text-slate-800 flex items-center gap-2">
+                📊 最新の生徒アクティビティ (自由学習)
+            </h3>
+            {% if logs %}
+            <div class="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
+                <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-slate-200">
+                        <thead class="bg-slate-50">
+                            <tr>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">生徒</th>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">種類</th>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">内容概要</th>
+                                <th class="px-4 py-3 text-left text-xs font-medium text-slate-500 uppercase">日時</th>
+                                <th class="px-4 py-3 text-center text-xs font-medium text-slate-500 uppercase">詳細</th>
+                            </tr>
+                        </thead>
+                        <tbody class="bg-white divide-y divide-slate-200">
+                            {% for log in logs %}
+                            <tr class="hover:bg-slate-50 transition">
+                                <td class="px-4 py-4 whitespace-nowrap text-sm font-bold text-slate-800">
+                                    {{ log.student.username }}
+                                </td>
+                                <td class="px-4 py-4 whitespace-nowrap text-sm">
+                                    <span class="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full {{ 'bg-purple-100 text-purple-800' if log.mode == 'problem' else 'bg-blue-100 text-blue-800' }}">
+                                        {{ '問題採点' if log.mode == 'problem' else 'レポート' }}
+                                    </span>
+                                </td>
+                                <td class="px-4 py-4 text-sm text-slate-500 max-w-xs">
+                                    <div class="flex items-center gap-2">
+                                        {% if log.input_image %}
+                                            <span class="text-xs bg-slate-100 border px-1 rounded">📷 画像</span>
+                                        {% endif %}
+                                        <span class="truncate w-32">{{ log.input_text or '(テキストなし)' }}</span>
+                                    </div>
+                                </td>
+                                <td class="px-4 py-4 whitespace-nowrap text-xs text-slate-400">
+                                    {{ log.created_at.strftime('%m/%d %H:%M') }}
+                                </td>
+                                <td class="px-4 py-4 text-center">
+                                    <button onclick="openModal('{{ log.id }}')" class="text-indigo-600 hover:text-indigo-900 font-bold text-sm bg-indigo-50 px-3 py-1 rounded hover:bg-indigo-100 transition">
+                                        詳細を見る
+                                    </button>
+                                    
+                                    <div id="data-{{ log.id }}" class="hidden">
+                                        <div class="student-name">{{ log.student.username }}</div>
+                                        <div class="mode-text">{{ '問題採点' if log.mode == 'problem' else 'レポート添削' }}</div>
+                                        <div class="date-text">{{ log.created_at.strftime('%Y年%m月%d日 %H:%M') }}</div>
+                                        <div class="input-text">{{ log.input_text }}</div>
+                                        <div class="input-image">{{ log.input_image or '' }}</div>
+                                        <div class="feedback-full">{{ log.feedback_content }}</div>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
             </div>
-        {% else %}
-            <p class="text-slate-500 text-center py-10">まだ課題がありません。左のフォームから作成してください。</p>
-        {% endif %}
+            {% else %}
+                <div class="bg-slate-50 rounded-lg p-6 text-center text-slate-500">
+                    まだ学習履歴がありません。
+                </div>
+            {% endif %}
+        </div>
     </div>
 </div>
+
+<div id="detailModal" class="fixed inset-0 z-[100] hidden" aria-labelledby="modal-title" role="dialog" aria-modal="true">
+    <div class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm transition-opacity" onclick="closeModal()"></div>
+
+    <div class="fixed inset-0 z-10 w-screen overflow-y-auto">
+        <div class="flex min-h-full items-center justify-center p-4 text-center sm:p-0">
+            <div class="relative transform overflow-hidden rounded-lg bg-white text-left shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-4xl max-h-[90vh] flex flex-col">
+                
+                <div class="bg-indigo-600 px-4 py-3 sm:px-6 flex justify-between items-center shrink-0">
+                    <h3 class="text-base font-bold leading-6 text-white" id="modal-title">📝 学習詳細ログ</h3>
+                    <button onclick="closeModal()" class="text-indigo-200 hover:text-white transition text-2xl font-bold">&times;</button>
+                </div>
+
+                <div class="px-4 py-5 sm:p-6 overflow-y-auto custom-scrollbar flex-grow">
+                    <div class="grid md:grid-cols-2 gap-6">
+                        <div class="space-y-4">
+                            <div class="border-b pb-2 mb-2">
+                                <span id="modal-student" class="font-bold text-lg text-slate-800 mr-2"></span>
+                                <span id="modal-mode" class="text-xs font-bold px-2 py-1 rounded bg-slate-200 text-slate-700"></span>
+                                <p id="modal-date" class="text-xs text-slate-500 mt-1"></p>
+                            </div>
+
+                            <div>
+                                <h4 class="text-sm font-bold text-slate-500 mb-2">📤 生徒の提出内容</h4>
+                                <div id="modal-input-image-area" class="mb-4 hidden">
+                                    <img id="modal-input-image" src="" class="w-full rounded-lg border border-slate-200 object-contain max-h-64 bg-slate-50">
+                                </div>
+                                <div id="modal-input-text" class="p-3 bg-slate-50 rounded border border-slate-200 text-sm whitespace-pre-wrap font-mono text-slate-700 max-h-60 overflow-y-auto"></div>
+                            </div>
+                        </div>
+
+                        <div class="flex flex-col h-full">
+                            <h4 class="text-sm font-bold text-indigo-600 mb-2 flex justify-between items-center">
+                                🤖 AI先生のフィードバック
+                                <button onclick="speakModalContent()" class="text-xs bg-indigo-100 text-indigo-700 px-2 py-1 rounded hover:bg-indigo-200">🔊 読み上げ</button>
+                            </h4>
+                            <div id="modal-feedback" class="flex-grow p-4 bg-indigo-50/50 rounded-lg border border-indigo-100 prose prose-sm prose-indigo max-w-none overflow-y-auto max-h-[60vh]">
+                                </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-slate-50 px-4 py-3 sm:flex sm:flex-row-reverse sm:px-6 shrink-0 border-t border-slate-200">
+                    <button type="button" class="mt-3 inline-flex w-full justify-center rounded-md bg-white px-3 py-2 text-sm font-semibold text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 hover:bg-slate-50 sm:mt-0 sm:w-auto" onclick="closeModal()">閉じる</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    let currentFeedbackText = "";
+
+    function openModal(id) {
+        const dataDiv = document.getElementById(`data-${id}`);
+        
+        // データを取得
+        const student = dataDiv.querySelector('.student-name').innerText;
+        const mode = dataDiv.querySelector('.mode-text').innerText;
+        const date = dataDiv.querySelector('.date-text').innerText;
+        const inputText = dataDiv.querySelector('.input-text').innerText;
+        const inputImage = dataDiv.querySelector('.input-image').innerText;
+        const feedback = dataDiv.querySelector('.feedback-full').innerText;
+
+        // モーダルにセット
+        document.getElementById('modal-student').innerText = student;
+        document.getElementById('modal-mode').innerText = mode;
+        document.getElementById('modal-date').innerText = date;
+        document.getElementById('modal-input-text').innerText = inputText || "(テキスト入力なし)";
+        
+        const imgArea = document.getElementById('modal-input-image-area');
+        const imgTag = document.getElementById('modal-input-image');
+        if (inputImage) {
+            imgTag.src = inputImage;
+            imgArea.classList.remove('hidden');
+        } else {
+            imgTag.src = "";
+            imgArea.classList.add('hidden');
+        }
+
+        // Markdownをレンダリング
+        const feedbackArea = document.getElementById('modal-feedback');
+        feedbackArea.innerHTML = marked.parse(feedback);
+        currentFeedbackText = feedback; // 読み上げ用保存
+
+        // 数式レンダリング (KaTeX)
+        if (typeof renderMathInElement === 'function') {
+            renderMathInElement(feedbackArea, {
+                delimiters: [{left: '$$', right: '$$', display: true}, {left: '$', right: '$', display: false}]
+            });
+        }
+
+        // 表示
+        document.getElementById('detailModal').classList.remove('hidden');
+        document.body.style.overflow = 'hidden'; // 背景スクロール固定
+    }
+
+    function closeModal() {
+        document.getElementById('detailModal').classList.add('hidden');
+        document.body.style.overflow = 'auto'; // 背景スクロール解除
+        window.speechSynthesis.cancel(); // 読み上げ停止
+    }
+
+    function speakModalContent() {
+        if(currentFeedbackText) speakText(currentFeedbackText);
+    }
+    
+    // ESCキーで閉じる
+    document.addEventListener('keydown', function(event) {
+        if (event.key === "Escape") {
+            closeModal();
+        }
+    });
+</script>
 {% endblock %}
