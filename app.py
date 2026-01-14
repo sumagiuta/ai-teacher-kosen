@@ -241,7 +241,6 @@ def generate_quiz_api():
     data = request.json
     assignment_id = data.get('assignment_id')
     user_id = session['user_id']
-
     existing_quiz = QuizLog.query.filter_by(assignment_id=assignment_id, student_id=user_id).first()
     if existing_quiz:
         return jsonify({
@@ -250,10 +249,8 @@ def generate_quiz_api():
             "student_answers": json.loads(existing_quiz.student_answers) if existing_quiz.student_answers else None,
             "grading_result": existing_quiz.grading_result
         })
-
     lesson_log = LessonLog.query.filter_by(assignment_id=assignment_id, student_id=user_id).first()
     if not lesson_log: return jsonify({"error": "先に授業を受けてください"}), 400
-    
     prompt = f"""
     以下の講義スライドに基づいて、学生の理解度を確認するための**記述式問題を3問**作成してください。
     【スライド内容】{lesson_log.slides_content}
@@ -274,17 +271,14 @@ def grade_quiz_api():
     quiz_log = QuizLog.query.get(data.get('quiz_id'))
     answers = data.get('answers')
     questions = json.loads(quiz_log.questions)
-    
     prompt = "高専の教員として回答を採点・解説してください。\n\n"
     for q in questions:
         prompt += f"問{q['q_id']}: {q['question']}\n回答: {answers.get(str(q['q_id']), '未回答')}\n\n"
-    
     try:
         res = model_pro.generate_content(prompt)
         quiz_log.student_answers = json.dumps(answers)
         quiz_log.grading_result = res.text
         db.session.commit()
-        
         db.session.add(GradingLog(student_id=session['user_id'], mode='quiz', input_text=f"確認テスト: {quiz_log.assignment.title}", feedback_content=res.text))
         db.session.commit()
         return jsonify({"result": res.text})
@@ -293,7 +287,7 @@ def grade_quiz_api():
 @app.route('/tools')
 def tools_page(): return render_template('free_tools.html')
 
-# --- ★修正: 模範解答（複数）と、解答なし時の対応 ---
+# --- ★修正: 問題画像と解答画像を分離して採点するロジック ---
 @app.route('/api/general_grading', methods=['POST'])
 def general_grading_api():
     data = request.json
@@ -301,63 +295,75 @@ def general_grading_api():
     user_id = session.get('user_id')
     
     contents = []
-    system_prompt = "あなたは高専の教員です。提出された画像やテキストを見て採点を行ってください。"
-    system_prompt += "【重要】画像の中に**複数の問題**が含まれている場合は、問1, 問2...のように**問題を区別して**それぞれ採点・解説してください。"
     
+    # Base64デコード関数
     def decode_image(b64): 
         try: return {"mime_type": "image/jpeg", "data": base64.b64decode(b64.split(",",1)[1] if "," in b64 else b64)}
         except: return None
 
+    # ログ保存用
     log_input_text = ""
     log_input_image = None
 
     if mode == 'report':
-        contents = [system_prompt, f"レポート本文:\n{data.get('text_content', '')}"]
+        contents = ["あなたは高専の教員です。以下のレポートを添削してください。", f"レポート本文:\n{data.get('text_content', '')}"]
         log_input_text = data.get('text_content', '')
         
     elif mode == 'problem':
+        # プロンプトの構築（ここが重要）
+        system_prompt = """
+        あなたは高専の教員です。以下に「問題（または模範解答）」と「生徒の解答」の画像が提示されます。
+        
+        【指示】
+        1. まず「問題画像」を読み取り、どのような問題が出されているか理解してください。
+        2. 次に「生徒の解答画像」を見て、採点を行ってください。
+        3. 生徒の解答には「問1」「Q2」などの番号が書かれています。**問題画像のどの問題に対応するかを紐づけて**採点してください。
+        4. 模範解答がない場合は、あなたの専門知識に基づいて正誤判定と解説を行ってください。
+        """
         contents.append(system_prompt)
         
-        # 模範解答テキスト
+        # 1. 問題・模範解答セクション
+        contents.append("\n=== 【A. 問題・模範解答セクション】 ===")
         model_answer_text = data.get('model_answer', '')
-        if model_answer_text: contents.append(f"【模範解答 (テキスト)】\n{model_answer_text}")
+        if model_answer_text: 
+            contents.append(f"補足テキスト: {model_answer_text}")
         
-        # ★模範解答画像 (複数対応)
-        model_answer_imgs = data.get('model_answer_images', [])
-        if model_answer_imgs:
-            contents.append("【模範解答 (画像一覧)】")
-            for i, img_str in enumerate(model_answer_imgs):
+        # 模範解答/問題画像 (複数)
+        problem_images = data.get('problem_images', [])
+        if problem_images:
+            contents.append("以下は「問題」または「模範解答」の画像です：")
+            for i, img_str in enumerate(problem_images):
                 decoded = decode_image(img_str)
                 if decoded: 
-                    contents.append(f"--- 模範解答画像 {i+1} ---")
+                    contents.append(f"Problem Image {i+1}")
                     contents.append(decoded)
 
-        # ★模範解答が一切ない場合のメッセージ
-        if not model_answer_text and not model_answer_imgs:
-            contents.append("※模範解答は提供されていません。あなたの専門知識に基づいて、正誤判定と解説を行ってください。")
-        else:
-            contents.append("\n上記「模範解答」を正解基準として採点してください。\n")
-        
-        # テキスト情報
+        # 2. 生徒の解答セクション
+        contents.append("\n=== 【B. 生徒の解答セクション】 ===")
         text_content = data.get('text_content', '')
         if text_content: 
-            contents.append(f"【補足情報・テキスト解答】\n{text_content}")
+            contents.append(f"生徒の補足テキスト: {text_content}")
             log_input_text = text_content
         
-        # 学生の解答画像 (複数)
-        images = data.get('images', [])
-        if images:
-            contents.append("【学生の解答 (画像一覧)】")
-            log_input_image = images[0]
-            for i, img_str in enumerate(images):
+        # 生徒の解答画像 (複数)
+        student_images = data.get('student_images', [])
+        if student_images:
+            contents.append("以下は「生徒が解いた解答」の画像です。問題番号(Q1など)を探して採点してください：")
+            log_input_image = student_images[0] # ログ用サムネイル
+            for i, img_str in enumerate(student_images):
                 decoded = decode_image(img_str)
                 if decoded: 
-                    contents.append(f"--- 学生画像 {i+1} ---")
+                    contents.append(f"Student Answer Image {i+1}")
                     contents.append(decoded)
+        
+        # バリデーション
+        if not problem_images and not student_images and not text_content:
+             return jsonify({"result": "画像またはテキストが入力されていません。"}), 400
 
     try:
         response = model_pro.generate_content(contents)
         result_text = response.text
+        
         db.session.add(GradingLog(
             student_id=user_id, mode=mode, input_text=log_input_text, 
             input_image=log_input_image, feedback_content=result_text
