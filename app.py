@@ -19,7 +19,9 @@ app = Flask(__name__)
 app.secret_key = 'kosen_pbl_secret_key'
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///kosen.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
+
+# ★修正: 複数画像を扱うため、容量制限を64MBに緩和
+app.config['MAX_CONTENT_LENGTH'] = 64 * 1024 * 1024
 
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
@@ -287,7 +289,7 @@ def grade_quiz_api():
 @app.route('/tools')
 def tools_page(): return render_template('free_tools.html')
 
-# --- ★修正: 問題画像と解答画像を分離して採点するロジック ---
+# --- 問題画像と解答画像を分離して採点するロジック ---
 @app.route('/api/general_grading', methods=['POST'])
 def general_grading_api():
     data = request.json
@@ -301,7 +303,6 @@ def general_grading_api():
         try: return {"mime_type": "image/jpeg", "data": base64.b64decode(b64.split(",",1)[1] if "," in b64 else b64)}
         except: return None
 
-    # ログ保存用
     log_input_text = ""
     log_input_image = None
 
@@ -310,7 +311,6 @@ def general_grading_api():
         log_input_text = data.get('text_content', '')
         
     elif mode == 'problem':
-        # プロンプトの構築（ここが重要）
         system_prompt = """
         あなたは高専の教員です。以下に「問題（または模範解答）」と「生徒の解答」の画像が提示されます。
         
@@ -322,13 +322,11 @@ def general_grading_api():
         """
         contents.append(system_prompt)
         
-        # 1. 問題・模範解答セクション
         contents.append("\n=== 【A. 問題・模範解答セクション】 ===")
         model_answer_text = data.get('model_answer', '')
         if model_answer_text: 
             contents.append(f"補足テキスト: {model_answer_text}")
         
-        # 模範解答/問題画像 (複数)
         problem_images = data.get('problem_images', [])
         if problem_images:
             contents.append("以下は「問題」または「模範解答」の画像です：")
@@ -338,18 +336,16 @@ def general_grading_api():
                     contents.append(f"Problem Image {i+1}")
                     contents.append(decoded)
 
-        # 2. 生徒の解答セクション
         contents.append("\n=== 【B. 生徒の解答セクション】 ===")
         text_content = data.get('text_content', '')
         if text_content: 
             contents.append(f"生徒の補足テキスト: {text_content}")
             log_input_text = text_content
         
-        # 生徒の解答画像 (複数)
         student_images = data.get('student_images', [])
         if student_images:
             contents.append("以下は「生徒が解いた解答」の画像です。問題番号(Q1など)を探して採点してください：")
-            log_input_image = student_images[0] # ログ用サムネイル
+            log_input_image = student_images[0]
             for i, img_str in enumerate(student_images):
                 decoded = decode_image(img_str)
                 if decoded: 
@@ -358,7 +354,7 @@ def general_grading_api():
         
         # バリデーション
         if not problem_images and not student_images and not text_content:
-             return jsonify({"result": "画像またはテキストが入力されていません。"}), 400
+             return jsonify({"error": "画像またはテキストが入力されていません。"}), 400
 
     try:
         response = model_pro.generate_content(contents)

@@ -1,0 +1,24 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<div class="max-w-md mx-auto bg-white rounded-xl shadow-md overflow-hidden md:max-w-md mt-10 p-8 border border-slate-200">
+    <div class="text-center mb-6">
+        <h2 class="text-2xl font-bold text-slate-800">ログイン</h2>
+        <p class="text-slate-500 text-sm">ユーザー名を入力して学習を始めましょう</p>
+    </div>
+
+    <form action="/login" method="post" class="space-y-4">
+        <div>
+            <label for="username" class="block text-sm font-medium text-slate-700">ユーザー名</label>
+            <input type="text" name="username" id="username" required 
+                class="mt-1 block w-full px-3 py-2 bg-white border border-slate-300 rounded-md text-sm shadow-sm placeholder-slate-400
+                focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500">
+            <p class="text-xs text-slate-400 mt-1">※デモ用: "sensei" または "gakusei" と入力</p>
+        </div>
+        <button type="submit" 
+            class="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition">
+            ログイン
+        </button>
+    </form>
+</div>
+{% endblock %}
