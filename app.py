@@ -20,7 +20,7 @@ app.secret_key = 'kosen_pbl_secret_key'
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///kosen.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# ★修正: 画像圧縮を入れても安全なように128MBまで許可
+# 容量制限は大きいままにしておく
 app.config['MAX_CONTENT_LENGTH'] = 128 * 1024 * 1024
 
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
@@ -281,6 +281,7 @@ def grade_quiz_api():
         quiz_log.student_answers = json.dumps(answers)
         quiz_log.grading_result = res.text
         db.session.commit()
+        # ここも画像がないので保存OK
         db.session.add(GradingLog(student_id=session['user_id'], mode='quiz', input_text=f"確認テスト: {quiz_log.assignment.title}", feedback_content=res.text))
         db.session.commit()
         return jsonify({"result": res.text})
@@ -302,7 +303,8 @@ def general_grading_api():
         except: return None
 
     log_input_text = ""
-    log_input_image = None
+    # ★変更: 画像はログに保存しないので変数を削除またはNoneにする
+    # log_input_image = None 
 
     if mode == 'report':
         contents = ["あなたは高専の教員です。以下のレポートを添削してください。", f"レポート本文:\n{data.get('text_content', '')}"]
@@ -340,7 +342,6 @@ def general_grading_api():
         student_images = data.get('student_images', [])
         if student_images:
             contents.append("以下は「生徒が解いた解答」の画像です。問題番号(Q1など)を探して採点してください：")
-            log_input_image = student_images[0]
             for i, img_str in enumerate(student_images):
                 decoded = decode_image(img_str)
                 if decoded: 
@@ -353,9 +354,14 @@ def general_grading_api():
     try:
         response = model_pro.generate_content(contents)
         result_text = response.text
+        
+        # ★ここが最大の修正ポイント: input_image=None にしてDB書き込みを軽量化
         db.session.add(GradingLog(
-            student_id=user_id, mode=mode, input_text=log_input_text, 
-            input_image=log_input_image, feedback_content=result_text
+            student_id=user_id, 
+            mode=mode, 
+            input_text=log_input_text, 
+            input_image=None,  # 画像はDBに保存しない！
+            feedback_content=result_text
         ))
         db.session.commit()
         return jsonify({"result": result_text})
