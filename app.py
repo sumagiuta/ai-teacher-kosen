@@ -1,6 +1,7 @@
 import os
 import json
 import base64
+import traceback
 from datetime import datetime, date, timedelta
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify, flash
 import google.generativeai as genai
@@ -19,8 +20,7 @@ app = Flask(__name__)
 app.secret_key = 'kosen_pbl_secret_key'
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///kosen.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-
-# 容量制限は大きいままにしておく
+# 画像アップロード用に128MBまで許可
 app.config['MAX_CONTENT_LENGTH'] = 128 * 1024 * 1024
 
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
@@ -33,9 +33,20 @@ try:
 except KeyError:
     print("エラー: GOOGLE_API_KEYが設定されていません。")
 
-model_pro = genai.GenerativeModel('gemini-3-pro-preview')
-model_flash = genai.GenerativeModel('gemini-3-flash-preview')
+# --- ★モデル設定（Gemini 3 Preview に変更） ---
+try:
+    # 採点・スライド生成用: 高精度な Gemini 3 Pro
+    model_pro = genai.GenerativeModel('gemini-3-pro-preview')
+    
+    # チャット・即答用: 高速な Gemini 3 Flash
+    model_flash = genai.GenerativeModel('gemini-3-flash-preview')
+except Exception as e:
+    print(f"モデル初期化エラー: {e}")
+    # フォールバック（万が一Gemini 3が使えない場合）
+    model_pro = genai.GenerativeModel('gemini-1.5-pro')
+    model_flash = genai.GenerativeModel('gemini-1.5-flash')
 
+# --- Google OAuth設定 ---
 CLIENT_SECRETS_FILE = "client_secret.json"
 SCOPES = [
     'openid',
@@ -281,7 +292,7 @@ def grade_quiz_api():
         quiz_log.student_answers = json.dumps(answers)
         quiz_log.grading_result = res.text
         db.session.commit()
-        # ここも画像がないので保存OK
+        # ここはテキストのみなので保存OK
         db.session.add(GradingLog(student_id=session['user_id'], mode='quiz', input_text=f"確認テスト: {quiz_log.assignment.title}", feedback_content=res.text))
         db.session.commit()
         return jsonify({"result": res.text})
@@ -290,82 +301,107 @@ def grade_quiz_api():
 @app.route('/tools')
 def tools_page(): return render_template('free_tools.html')
 
+# --- ★マルチパート対応 & Gemini 3 Pro 採点API ---
 @app.route('/api/general_grading', methods=['POST'])
 def general_grading_api():
-    data = request.json
-    mode = data.get('mode')
-    user_id = session.get('user_id')
+    print("--- 採点APIが呼び出されました ---")
     
-    contents = []
-    
-    def decode_image(b64): 
-        try: return {"mime_type": "image/jpeg", "data": base64.b64decode(b64.split(",",1)[1] if "," in b64 else b64)}
-        except: return None
-
-    log_input_text = ""
-    # ★変更: 画像はログに保存しないので変数を削除またはNoneにする
-    # log_input_image = None 
-
-    if mode == 'report':
-        contents = ["あなたは高専の教員です。以下のレポートを添削してください。", f"レポート本文:\n{data.get('text_content', '')}"]
-        log_input_text = data.get('text_content', '')
-        
-    elif mode == 'problem':
-        system_prompt = """
-        あなたは高専の教員です。以下に「問題（または模範解答）」と「生徒の解答」の画像が提示されます。
-        【指示】
-        1. まず「問題画像」を読み取り、どのような問題が出されているか理解してください。
-        2. 次に「生徒の解答画像」を見て、採点を行ってください。
-        3. 生徒の解答には「問1」「Q2」などの番号が書かれています。**問題画像のどの問題に対応するかを紐づけて**採点してください。
-        4. 模範解答がない場合は、あなたの専門知識に基づいて正誤判定と解説を行ってください。
-        """
-        contents.append(system_prompt)
-        contents.append("\n=== 【A. 問題・模範解答セクション】 ===")
-        model_answer_text = data.get('model_answer', '')
-        if model_answer_text: contents.append(f"補足テキスト: {model_answer_text}")
-        
-        problem_images = data.get('problem_images', [])
-        if problem_images:
-            contents.append("以下は「問題」または「模範解答」の画像です：")
-            for i, img_str in enumerate(problem_images):
-                decoded = decode_image(img_str)
-                if decoded: 
-                    contents.append(f"Problem Image {i+1}")
-                    contents.append(decoded)
-
-        contents.append("\n=== 【B. 生徒の解答セクション】 ===")
-        text_content = data.get('text_content', '')
-        if text_content: 
-            contents.append(f"生徒の補足テキスト: {text_content}")
-            log_input_text = text_content
-        
-        student_images = data.get('student_images', [])
-        if student_images:
-            contents.append("以下は「生徒が解いた解答」の画像です。問題番号(Q1など)を探して採点してください：")
-            for i, img_str in enumerate(student_images):
-                decoded = decode_image(img_str)
-                if decoded: 
-                    contents.append(f"Student Answer Image {i+1}")
-                    contents.append(decoded)
-        
-        if not problem_images and not student_images and not text_content:
-             return jsonify({"error": "画像またはテキストが入力されていません。"}), 400
-
     try:
+        # JSONではなく、request.form(テキスト)とrequest.files(ファイル)で受け取る
+        mode = request.form.get('mode')
+        user_id = session.get('user_id')
+        print(f"モード: {mode}, UserID: {user_id}")
+        
+        contents = []
+        log_input_text = ""
+
+        if mode == 'report':
+            text_content = request.form.get('text_content', '')
+            contents = ["あなたは高専の教員です。以下のレポートを添削してください。", f"レポート本文:\n{text_content}"]
+            log_input_text = text_content
+            
+        elif mode == 'problem':
+            system_prompt = """
+            あなたは高専の教員です。以下に「問題（または模範解答）」と「生徒の解答」の画像が提示されます。
+            【指示】
+            1. まず「問題画像」を読み取り、どのような問題が出されているか理解してください。
+            2. 次に「生徒の解答画像」を見て、採点を行ってください。
+            3. 生徒の解答には「問1」「Q2」などの番号が書かれています。**問題画像のどの問題に対応するかを紐づけて**採点してください。
+            4. 模範解答がない場合は、あなたの専門知識に基づいて正誤判定と解説を行ってください。
+            """
+            contents.append(system_prompt)
+            contents.append("\n=== 【A. 問題・模範解答セクション】 ===")
+            
+            model_answer_text = request.form.get('model_answer', '')
+            if model_answer_text: contents.append(f"補足テキスト: {model_answer_text}")
+            
+            # files.getlist()で複数ファイルを直接リストとして取得
+            problem_files = request.files.getlist('problem_images')
+            print(f"問題ファイル数: {len(problem_files)}")
+            
+            if problem_files:
+                contents.append("以下は「問題」または「模範解答」の画像です：")
+                for i, f in enumerate(problem_files):
+                    if f.filename == '': continue
+                    print(f"  - 問題画像処理中: {f.filename} ({f.mimetype})")
+                    file_data = {
+                        "mime_type": f.mimetype or "image/jpeg",
+                        "data": f.read() # バイナリ読み込み
+                    }
+                    contents.append(f"Problem Image {i+1}")
+                    contents.append(file_data)
+
+            contents.append("\n=== 【B. 生徒の解答セクション】 ===")
+            text_content = request.form.get('text_content', '')
+            if text_content: 
+                contents.append(f"生徒の補足テキスト: {text_content}")
+                log_input_text = text_content
+            
+            student_files = request.files.getlist('student_images')
+            print(f"生徒ファイル数: {len(student_files)}")
+            
+            if student_files:
+                contents.append("以下は「生徒が解いた解答」の画像です。問題番号(Q1など)を探して採点してください：")
+                for i, f in enumerate(student_files):
+                    if f.filename == '': continue
+                    print(f"  - 生徒画像処理中: {f.filename} ({f.mimetype})")
+                    file_data = {
+                        "mime_type": f.mimetype or "image/jpeg",
+                        "data": f.read()
+                    }
+                    contents.append(f"Student Answer Image {i+1}")
+                    contents.append(file_data)
+            
+            # バリデーション
+            has_problems = any(f.filename != '' for f in problem_files)
+            has_students = any(f.filename != '' for f in student_files)
+            if not has_problems and not has_students and not text_content:
+                 return jsonify({"error": "画像またはテキストが入力されていません。"}), 400
+
+        print("Geminiへデータを送信します...")
+        # Geminiへのリクエスト (gemini-3-pro-preview を使用)
         response = model_pro.generate_content(contents)
         result_text = response.text
+        print("Geminiから応答がありました")
         
-        # ★ここが最大の修正ポイント: input_image=None にしてDB書き込みを軽量化
+        # ログ保存（画像はDBに保存せず、テキストのみ保存する）
         db.session.add(GradingLog(
-            student_id=user_id, 
-            mode=mode, 
-            input_text=log_input_text, 
-            input_image=None,  # 画像はDBに保存しない！
-            feedback_content=result_text
+            student_id=user_id, mode=mode, input_text=log_input_text, 
+            input_image=None, feedback_content=result_text
         ))
         db.session.commit()
+        
         return jsonify({"result": result_text})
-    except Exception as e: return jsonify({"error": str(e)}), 500
+
+    except Exception as e:
+        error_trace = traceback.format_exc()
+        print("！！！サーバー内部エラー！！！")
+        print(error_trace)
+        return jsonify({
+            "error": "サーバー内部エラーが発生しました",
+            "details": str(e),
+            "trace": error_trace
+        }), 500
 
 @app.route('/switch_role')
 def switch_role():
